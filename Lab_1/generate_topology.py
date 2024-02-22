@@ -1,4 +1,7 @@
 import argparse
+import copy
+import ipaddress
+import itertools
 import re
 import sys
 
@@ -8,8 +11,13 @@ import yaml
 CONFIG_STATE = {
     "name": "static_routing",
     "prefix": "",
+    "mgmt": {"network": "statics", "ipv4-subnet": "172.20.20.0/24"},
     "topology": {"nodes": {}, "links": []},
 }
+
+ADDRESS_GENERATOR = itertools.islice(
+    ipaddress.IPv4Network(CONFIG_STATE["mgmt"]["ipv4-subnet"]).hosts(), 1, None
+)
 
 
 def nat_type(x: str, /) -> int:
@@ -29,7 +37,8 @@ def create_routers(amount: int) -> None:
     }
 
     for i in range(amount):
-        CONFIG_STATE["topology"]["nodes"][f"R{i}"] = config
+        config["mgmt-ipv4"] = format(next(ADDRESS_GENERATOR))
+        CONFIG_STATE["topology"]["nodes"][f"R{i}"] = copy.deepcopy(config)
 
 
 def create_devices(amount: int) -> None:
@@ -40,7 +49,8 @@ def create_devices(amount: int) -> None:
     }
 
     for i in range(amount):
-        CONFIG_STATE["topology"]["nodes"][f"PC{i}"] = config
+        config["mgmt-ipv4"] = format(next(ADDRESS_GENERATOR))
+        CONFIG_STATE["topology"]["nodes"][f"PC{i}"] = copy.deepcopy(config)
 
 
 def create_nodes(subnets: int) -> None:
@@ -102,8 +112,10 @@ def populate_config(argv: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--subnets", type=nat_type, default=3)
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("--subnets", type=nat_type, default=3, help="amount of subnets")
 
     populate_config(parser.parse_args())
-    sys.stdout.write(yaml.safe_dump(CONFIG_STATE, indent=4))
+    sys.stdout.write(yaml.safe_dump(CONFIG_STATE, indent=4, sort_keys=False))

@@ -1,2 +1,4 @@
+.venv/
 clab-static_routing/
+*.yml
 *.yml.bak

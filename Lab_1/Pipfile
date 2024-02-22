@@ -5,6 +5,7 @@ name = "pypi"
 
 [packages]
 pyyaml = "==6.0.1"
+docker = "==7.0.0"
 
 [dev-packages]
 python-lsp-server = {extras = ["pylint"], version = "*"}
