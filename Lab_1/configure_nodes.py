@@ -1,7 +1,9 @@
 import argparse
 from contextlib import closing, contextmanager
 from enum import IntFlag
+import itertools
 from pathlib import Path
+from select import select
 from socket import socket, SocketIO
 from subprocess import list2cmdline
 from typing import Callable, Iterator, List
@@ -10,6 +12,9 @@ import docker
 from docker.models.containers import Container
 from docker.utils.socket import next_frame_header, read_exactly
 import yaml
+
+READ_TIMEOUT_SEC = 1.
+WRITE_TIMEOUT_SEC = 1.
 
 
 class Stream(IntFlag):
@@ -28,12 +33,21 @@ def spawn_process(container: Container, cmd: List[str]) -> Iterator[socket]:
 
 
 def send_command(process: socket, cmd: List[str]) -> None:
+    if (
+        sum(1 for _ in itertools.chain(*select([], [process], [], WRITE_TIMEOUT_SEC)))
+        == 0
+    ):
+        raise TimeoutError
+
     cmdline = list2cmdline(cmd) + "\n"
     process.sendall(cmdline.encode())
 
 
 def dropwhile_frame(process: socket, predicate: Callable[[Stream], bool]) -> int:
-    while True:
+    while (
+        sum(1 for _ in itertools.chain(*select([process], [], [], READ_TIMEOUT_SEC)))
+        == 1
+    ):
         stream, next_size = next_frame_header(process)
 
         if not predicate(stream):
@@ -41,12 +55,22 @@ def dropwhile_frame(process: socket, predicate: Callable[[Stream], bool]) -> int
 
         read_exactly(process, next_size)
 
+    return 0
 
-def take_frame(process: socket, predicate: Callable[[Stream], bool]) -> int:
-    stream, next_size = next_frame_header(process)
-    assert predicate(stream)
 
-    return next_size
+def takewhile_frame(
+    process: socket, predicate: Callable[[Stream], bool]
+) -> Iterator[int]:
+    while (
+        sum(1 for _ in itertools.chain(*select([process], [], [], READ_TIMEOUT_SEC)))
+        == 1
+    ):
+        stream, next_size = next_frame_header(process)
+
+        if not predicate(stream):
+            break
+
+        yield next_size
 
 
 def main(argv: argparse.Namespace) -> None:
@@ -59,9 +83,18 @@ def main(argv: argparse.Namespace) -> None:
         with spawn_process(containers[node], ["vtysh"]) as proc:
             # Can't open configuration file /etc/frr/vtysh.conf due to 'No such file or directory'.
             stdout_size = dropwhile_frame(proc, lambda stream: stream == Stream.STDERR)
+            assert stdout_size > 0
 
             data = read_exactly(proc, stdout_size)
             print(data.decode())
+
+            send_command(proc, ["show", "ver"])
+
+            for stdout_size in takewhile_frame(
+                proc, lambda stream: stream == Stream.STDOUT
+            ):
+                data = read_exactly(proc, stdout_size)
+                print(data.decode())
 
             send_command(proc, ["exit"])
 
