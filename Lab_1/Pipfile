@@ -1,0 +1,14 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+pyyaml = "==6.0.1"
+
+[dev-packages]
+python-lsp-server = {extras = ["pylint"], version = "*"}
+black = "==23.9.1"
+
+[requires]
+python_version = "*"
