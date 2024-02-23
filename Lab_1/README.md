@@ -97,4 +97,88 @@ options:
   -t TOPOLOGY, --topology TOPOLOGY
                         path to topology.yml file
 (Lab_1) # python configure_nodes.py -t topology.yml
+---------
+R1 configuration:
+---------
+
+Interface       Status  VRF             Addresses
+---------       ------  ---             ---------
+eth0            up      default         172.20.20.3/24
+eth1            up      default         192.168.1.2/24
+eth2            up      default         192.168.2.2/24
+eth3            up      default         172.25.2.2/24
+lo              up      default         10.10.10.2/32
+
+R1#
+exit
+
+---------
+R0 configuration:
+---------
+
+Interface       Status  VRF             Addresses
+---------       ------  ---             ---------
+clab-c920b2c1   down    default
+eth0            up      default         172.20.20.2/24
+eth1            up      default         192.168.1.1/24
+eth2            up      default         192.168.3.1/24
+eth3            up      default         172.25.1.1/24
+lo              up      default         10.10.10.1/32
+
+R0# exit
+
+---------
+PC2 configuration:
+---------
+
+Interface       Status  VRF             Addresses
+---------       ------  ---             ---------
+eth0            up      default         172.20.20.7/24
+eth1            up      default         172.25.3.4/24
+lo              up      default
+
+PC2#
+exit
+
+---------
+R2 configuration:
+---------
+
+Interface       Status  VRF             Addresses
+---------       ------  ---             ---------
+eth0            up      default         172.20.20.4/24
+eth1            up      default         192.168.2.3/24
+eth2            up      default         192.168.3.3/24
+eth3            up      default         172.25.3.3/24
+lo              up      default         10.10.10.3/32
+
+
+R2#
+exit
+
+---------
+PC1 configuration:
+---------
+
+Interface       Status  VRF             Addresses
+---------       ------  ---             ---------
+eth0            up      default         172.20.20.6/24
+eth1            up      default         172.25.2.3/24
+lo              up      default
+
+PC1#
+exit
+
+---------
+PC0 configuration:
+---------
+
+Interface       Status  VRF             Addresses
+---------       ------  ---             ---------
+eth0            up      default         172.20.20.5/24
+eth1            up      default         172.25.1.2/24
+lo              up      default
+
+PC0#
+exit
 ```
