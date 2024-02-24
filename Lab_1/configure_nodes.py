@@ -379,6 +379,11 @@ def setup_static_routing(config: Path, vtysh_processes: Dict[str, socket]) -> No
             knows_target_subnet = node
 
 
+def leave_vtysh(vtysh_processes: Dict[str, socket]) -> None:
+    for _, proc in vtysh_processes.items():
+        send_command(proc, ["exit"])
+
+
 def main(argv: argparse.Namespace) -> None:
     with ExitStack() as stack:
         vtysh_processes = create_vtysh_processes(stack, enter_config=True)
@@ -394,6 +399,7 @@ def main(argv: argparse.Namespace) -> None:
         commit_configs(vtysh_processes)
 
         show_command_output(vtysh_processes, ["sh", "ip", "route"])
+        leave_vtysh(vtysh_processes)
 
 
 if __name__ == "__main__":
