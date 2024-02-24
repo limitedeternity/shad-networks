@@ -1,13 +1,16 @@
 import argparse
+from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import closing, contextmanager, ExitStack
+from dataclasses import astuple, dataclass
 from enum import IntFlag
+import ipaddress
 import itertools
 from pathlib import Path
 import re
 from select import select
 from socket import socket, SocketIO
 from subprocess import list2cmdline
-import sys
 from typing import Callable, Dict, Iterator, List, Tuple
 
 import docker
@@ -17,6 +20,8 @@ import yaml
 
 READ_TIMEOUT_SEC = 1.0
 WRITE_TIMEOUT_SEC = 1.0
+
+NETWORK_MAP = defaultdict(dict)
 
 
 class Stream(IntFlag):
@@ -91,7 +96,7 @@ def yield_links(config: Path) -> Tuple[Dict[str, str], Dict[str, str]]:
 
 
 def create_vtysh_processes(
-    stack: ExitStack, enter_config: bool = True
+    stack: ExitStack, *, enter_config: bool = False
 ) -> Dict[str, socket]:
     client = docker.from_env()
     vtysh_processes = {}
@@ -121,9 +126,12 @@ def setup_router_loopbacks(vtysh_processes: Dict[str, socket]) -> None:
             continue
 
         node_id = int(re.match(r"^R(\d+)$", node).group(1))
+        lo_iface = ipaddress.IPv4Interface(f"10.10.10.{node_id + 1}/32")
 
         send_command(proc, ["int", "lo"])
-        send_command(proc, ["ip", "addr", f"10.10.10.{node_id + 1}/32"])
+        send_command(proc, ["ip", "addr", lo_iface.with_prefixlen])
+
+        NETWORK_MAP[node][lo_iface.network] = (lo_iface.ip, "lo")
 
 
 def setup_router_subnets(config: Path, vtysh_processes: Dict[str, socket]) -> None:
@@ -133,29 +141,36 @@ def setup_router_subnets(config: Path, vtysh_processes: Dict[str, socket]) -> No
         assert len(fst) == 1
         assert len(snd) == 1
 
-        fst_node, fst_iface = next(iter(fst.items()))
-        snd_node, snd_iface = next(iter(snd.items()))
+        fst_node, fst_adapter = next(iter(fst.items()))
+        snd_node, snd_adapter = next(iter(snd.items()))
 
         if re.match(r"^PC\d+$", fst_node) or re.match(r"^PC\d+$", snd_node):
             continue
 
         assert subnet_counter < 256
 
-        fst_proc = vtysh_processes[fst_node]
-        snd_proc = vtysh_processes[snd_node]
-
         fst_node_id = int(re.match(r"^R(\d+)$", fst_node).group(1))
         snd_node_id = int(re.match(r"^R(\d+)$", snd_node).group(1))
 
-        send_command(fst_proc, ["int", fst_iface])
-        send_command(
-            fst_proc, ["ip", "addr", f"192.168.{subnet_counter}.{fst_node_id + 1}/24"]
+        fst_node_iface = ipaddress.IPv4Interface(
+            f"192.168.{subnet_counter}.{fst_node_id + 1}/24"
+        )
+        snd_node_iface = ipaddress.IPv4Interface(
+            f"192.168.{subnet_counter}.{snd_node_id + 1}/24"
         )
 
-        send_command(snd_proc, ["int", snd_iface])
+        send_command(vtysh_processes[fst_node], ["int", fst_adapter])
         send_command(
-            snd_proc, ["ip", "addr", f"192.168.{subnet_counter}.{snd_node_id + 1}/24"]
+            vtysh_processes[fst_node], ["ip", "addr", fst_node_iface.with_prefixlen]
         )
+
+        send_command(vtysh_processes[snd_node], ["int", snd_adapter])
+        send_command(
+            vtysh_processes[snd_node], ["ip", "addr", snd_node_iface.with_prefixlen]
+        )
+
+        NETWORK_MAP[fst_node][fst_node_iface.network] = (fst_node_iface.ip, fst_adapter)
+        NETWORK_MAP[snd_node][snd_node_iface.network] = (snd_node_iface.ip, snd_adapter)
 
         subnet_counter += 1
 
@@ -165,95 +180,220 @@ def setup_pc_links(config: Path, vtysh_processes: Dict[str, socket]) -> None:
         assert len(fst) == 1
         assert len(snd) == 1
 
-        fst_node, fst_iface = next(iter(fst.items()))
-        snd_node, snd_iface = next(iter(snd.items()))
+        fst_node, fst_adapter = next(iter(fst.items()))
+        snd_node, snd_adapter = next(iter(snd.items()))
 
-        pc_node, pc_iface = None, None
-        router_node, router_iface = None, None
+        pc_node, pc_node_adapter = None, None
+        router_node, router_node_adapter = None, None
 
         if re.match(r"^PC\d+$", fst_node):
             pc_node = fst_node
-            pc_iface = fst_iface
+            pc_node_adapter = fst_adapter
 
         elif re.match(r"^R\d+$", fst_node):
             router_node = fst_node
-            router_iface = fst_iface
+            router_node_adapter = fst_adapter
 
         if re.match(r"^PC\d+$", snd_node):
             pc_node = snd_node
-            pc_iface = snd_iface
+            pc_node_adapter = snd_adapter
 
         elif re.match(r"^R\d+$", snd_node):
             router_node = snd_node
-            router_iface = snd_iface
+            router_node_adapter = snd_adapter
 
         if pc_node is None or router_node is None:
             continue
 
-        pc_proc = vtysh_processes[pc_node]
-        router_proc = vtysh_processes[router_node]
-
         router_node_id = int(re.match(r"^R(\d+)$", router_node).group(1))
 
-        send_command(router_proc, ["int", router_iface])
-        send_command(
-            router_proc,
-            ["ip", "addr", f"172.25.{router_node_id + 1}.{router_node_id + 1}/24"],
+        pc_node_iface = ipaddress.IPv4Interface(
+            f"172.25.{router_node_id + 1}.{router_node_id + 2}/24"
+        )
+        router_node_iface = ipaddress.IPv4Interface(
+            f"172.25.{router_node_id + 1}.{router_node_id + 1}/24"
         )
 
-        send_command(pc_proc, ["int", pc_iface])
+        send_command(vtysh_processes[router_node], ["int", router_node_adapter])
         send_command(
-            pc_proc,
-            ["ip", "addr", f"172.25.{router_node_id + 1}.{router_node_id + 2}/24"],
+            vtysh_processes[router_node],
+            ["ip", "addr", router_node_iface.with_prefixlen],
+        )
+
+        send_command(vtysh_processes[pc_node], ["int", pc_node_adapter])
+        send_command(
+            vtysh_processes[pc_node], ["ip", "addr", pc_node_iface.with_prefixlen]
+        )
+
+        NETWORK_MAP[pc_node][pc_node_iface.network] = (
+            pc_node_iface.ip,
+            pc_node_adapter,
+        )
+        NETWORK_MAP[router_node][router_node_iface.network] = (
+            router_node_iface.ip,
+            router_node_adapter,
         )
 
 
 def commit_configs(vtysh_processes: Dict[str, socket]) -> None:
     for _, proc in vtysh_processes.items():
         send_command(proc, ["do", "wr"])
-
-        # Leave config-if mode
         send_command(proc, ["exit"])
+
+
+def show_command_output(vtysh_processes: Dict[str, socket], cmd: List[str]) -> None:
+    for node, proc in vtysh_processes.items():
+        stderr_size = dropwhile_frame(proc, lambda stream: stream == Stream.STDOUT)
+        assert stderr_size == 0
+
+        send_command(proc, cmd)
+
+        print("\n---------")
+        print(f"{node} [{list2cmdline(cmd)}]:")
+        print("---------\n")
+
+        skip_counter = 0
+
+        for stdout_size in takewhile_frame(
+            proc, lambda stream: stream == Stream.STDOUT
+        ):
+            data = read_exactly(proc, stdout_size).decode()
+
+            if skip_counter < 1:
+                skip_counter += 1
+
+                continue
+
+            print(data)
+
+
+@dataclass
+class RouteLink:
+    node: str
+    adapter: str
+
+    def __iter__(self):
+        return iter(astuple(self))
+
+
+def build_routing_graph(config: Path) -> Mapping[str, RouteLink]:
+    routing_graph = defaultdict(list)
+
+    for fst, snd in yield_links(config):
+        assert len(fst) == 1
+        assert len(snd) == 1
+
+        fst_node, fst_adapter = next(iter(fst.items()))
+        snd_node, snd_adapter = next(iter(snd.items()))
+
+        routing_graph[fst_node].append(RouteLink(snd_node, fst_adapter))
+        routing_graph[snd_node].append(RouteLink(fst_node, snd_adapter))
+
+    for node in routing_graph:
+        if re.match(r"^PC\d+$", node):
+            continue
+
+        routing_graph[node].append(RouteLink(node, "lo"))
+
+    routing_graph.default_factory = None
+
+    return routing_graph
+
+
+def dijkstra(graph: Mapping[str, RouteLink], source: str, dest: str) -> List[str]:
+    distances = {vertex: float("inf") for vertex in graph}
+    prev_vertices = {vertex: None for vertex in graph}
+    distances[source] = 0
+    vertices = list(graph)
+
+    while vertices:
+        curr_vertex = min(vertices, key=lambda v: distances[v])
+
+        if distances[curr_vertex] == float("inf"):
+            break
+
+        for connection in graph[curr_vertex]:
+            neighbour, _ = connection
+
+            alt_route = distances[curr_vertex] + 1
+            curr_distance = distances[neighbour]
+
+            if alt_route < curr_distance:
+                distances[neighbour] = alt_route
+                prev_vertices[neighbour] = curr_vertex
+
+        vertices.remove(curr_vertex)
+
+    path, curr_vertex = [], dest
+
+    while prev_vertices[curr_vertex] is not None:
+        path.insert(0, curr_vertex)
+        curr_vertex = prev_vertices[curr_vertex]
+
+    if path:
+        path.insert(0, curr_vertex)
+
+    return path
+
+
+def setup_static_routing(config: Path, vtysh_processes: Dict[str, socket]) -> None:
+    NETWORK_MAP.default_factory = None
+    routing_graph = build_routing_graph(config)
+
+    for from_node, to_node in itertools.product(routing_graph, repeat=2):
+        if from_node == to_node:
+            continue
+
+        path = dijkstra(routing_graph, from_node, to_node)
+        assert path
+
+        target_subnet = next(iter(NETWORK_MAP[path[-1]]))
+        knows_target_subnet = path[-1]
+
+        for node in itertools.islice(reversed(path), 1, None):
+            if target_subnet in NETWORK_MAP[node]:
+                knows_target_subnet = node
+
+                continue
+
+            coverage_intersection = set(NETWORK_MAP[node]) & set(
+                NETWORK_MAP[knows_target_subnet]
+            )
+            assert coverage_intersection
+
+            where_is_he = next(iter(coverage_intersection))
+            his_address, _ = NETWORK_MAP[knows_target_subnet][where_is_he]
+            _, our_adapter = NETWORK_MAP[node][where_is_he]
+
+            send_command(
+                vtysh_processes[node],
+                [
+                    "ip",
+                    "route",
+                    format(target_subnet),
+                    format(his_address),
+                    our_adapter,
+                ],
+            )
+
+            knows_target_subnet = node
 
 
 def main(argv: argparse.Namespace) -> None:
     with ExitStack() as stack:
-        vtysh_processes = create_vtysh_processes(stack)
+        vtysh_processes = create_vtysh_processes(stack, enter_config=True)
 
         setup_router_loopbacks(vtysh_processes)
         setup_router_subnets(argv.topology, vtysh_processes)
         setup_pc_links(argv.topology, vtysh_processes)
         commit_configs(vtysh_processes)
 
-        for node, proc in vtysh_processes.items():
-            # Leave config mode
-            send_command(proc, ["exit"])
+        show_command_output(vtysh_processes, ["do", "sh", "int", "brief"])
 
-            stderr_size = dropwhile_frame(proc, lambda stream: stream == Stream.STDOUT)
-            assert stderr_size == 0
+        setup_static_routing(argv.topology, vtysh_processes)
+        commit_configs(vtysh_processes)
 
-            send_command(proc, ["sh", "int", "brief"])
-
-            # Leave main mode
-            send_command(proc, ["exit"])
-
-            print("---------")
-            print(f"{node} configuration:")
-            print("---------\n")
-
-            skip_counter = 0
-
-            for stdout_size in takewhile_frame(
-                proc, lambda stream: stream == Stream.STDOUT
-            ):
-                data = read_exactly(proc, stdout_size).decode()
-
-                if skip_counter < 1:
-                    skip_counter += 1
-
-                    continue
-
-                print(data)
+        show_command_output(vtysh_processes, ["sh", "ip", "route"])
 
 
 if __name__ == "__main__":
