@@ -1,3 +1,5 @@
+# Лабораторная работа 1: Статическая маршрутизация
+
 ```bash
 $ PIPENV_VENV_IN_PROJECT=1 pipenv sync --dev
 <...>
@@ -97,88 +99,44 @@ options:
   -t TOPOLOGY, --topology TOPOLOGY
                         path to topology.yml file
 (Lab_1) # python configure_nodes.py -t topology.yml
----------
-R1 configuration:
----------
-
-Interface       Status  VRF             Addresses
----------       ------  ---             ---------
-eth0            up      default         172.20.20.3/24
-eth1            up      default         192.168.1.2/24
-eth2            up      default         192.168.2.2/24
-eth3            up      default         172.25.2.2/24
-lo              up      default         10.10.10.2/32
-
-R1#
-exit
 
 ---------
-R0 configuration:
+R0 [do sh int brief]:
 ---------
 
 Interface       Status  VRF             Addresses
 ---------       ------  ---             ---------
-clab-c920b2c1   down    default
 eth0            up      default         172.20.20.2/24
 eth1            up      default         192.168.1.1/24
 eth2            up      default         192.168.3.1/24
 eth3            up      default         172.25.1.1/24
 lo              up      default         10.10.10.1/32
 
-R0# exit
+R0(config)#
+
+<...>
 
 ---------
-PC2 configuration:
+PC2 [sh ip route]:
 ---------
 
-Interface       Status  VRF             Addresses
----------       ------  ---             ---------
-eth0            up      default         172.20.20.7/24
-eth1            up      default         172.25.3.4/24
-lo              up      default
+Codes: K - kernel route, C - connected, S - static, R - RIP,
+       O - OSPF, I - IS-IS, B - BGP, E - EIGRP, N - NHRP,
+       T - Table, v - VNC, V - VNC-Direct, A - Babel, F - PBR,
+       f - OpenFabric,
+       > - selected route, * - FIB route, q - queued, r - rejected, b - backup
+       t - trapped, o - offload failure
+
+K>* 0.0.0.0/0 [0/0] via 172.20.20.1, eth0, 00:00:29
+S>* 10.10.10.1/32 [1/0] via 172.25.3.3, eth1, weight 1, 00:00:05
+S>* 10.10.10.2/32 [1/0] via 172.25.3.3, eth1, weight 1, 00:00:05
+S>* 10.10.10.3/32 [1/0] via 172.25.3.3, eth1, weight 1, 00:00:05
+C>* 172.20.20.0/24 is directly connected, eth0, 00:00:29
+S>* 172.25.1.0/24 [1/0] via 172.25.3.3, eth1, weight 1, 00:00:05
+S>* 172.25.2.0/24 [1/0] via 172.25.3.3, eth1, weight 1, 00:00:05
+C>* 172.25.3.0/24 is directly connected, eth1, 00:00:18
 
 PC2#
-exit
 
----------
-R2 configuration:
----------
-
-Interface       Status  VRF             Addresses
----------       ------  ---             ---------
-eth0            up      default         172.20.20.4/24
-eth1            up      default         192.168.2.3/24
-eth2            up      default         192.168.3.3/24
-eth3            up      default         172.25.3.3/24
-lo              up      default         10.10.10.3/32
-
-
-R2#
-exit
-
----------
-PC1 configuration:
----------
-
-Interface       Status  VRF             Addresses
----------       ------  ---             ---------
-eth0            up      default         172.20.20.6/24
-eth1            up      default         172.25.2.3/24
-lo              up      default
-
-PC1#
-exit
-
----------
-PC0 configuration:
----------
-
-Interface       Status  VRF             Addresses
----------       ------  ---             ---------
-eth0            up      default         172.20.20.5/24
-eth1            up      default         172.25.1.2/24
-lo              up      default
-
-PC0#
-exit
+<...>
 ```
