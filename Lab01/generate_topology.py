@@ -29,33 +29,39 @@ def nat_type(x: str, /) -> int:
     return x
 
 
-def create_routers(amount: int) -> None:
+def create_routers(amount: int, *, disable_eth0: bool = False) -> None:
     config = {
         "kind": "linux",
         "image": "quay.io/frrouting/frr:9.1.0",
         "binds": ["./.init/daemons:/etc/frr/daemons"],
     }
 
+    if disable_eth0:
+        config["network-mode"] = "none"
+
     for i in range(amount):
         config["mgmt-ipv4"] = format(next(ADDRESS_GENERATOR))
         CONFIG_STATE["topology"]["nodes"][f"R{i}"] = copy.deepcopy(config)
 
 
-def create_devices(amount: int) -> None:
+def create_devices(amount: int, *, disable_eth0: bool = False) -> None:
     config = {
         "kind": "linux",
         "image": "frrouting/frr-debian:latest",
         "binds": ["./.init/daemons:/etc/frr/daemons"],
     }
 
+    if disable_eth0:
+        config["network-mode"] = "none"
+
     for i in range(amount):
         config["mgmt-ipv4"] = format(next(ADDRESS_GENERATOR))
         CONFIG_STATE["topology"]["nodes"][f"PC{i}"] = copy.deepcopy(config)
 
 
-def create_nodes(subnets: int) -> None:
-    create_routers(subnets)
-    create_devices(subnets)
+def create_nodes(subnets: int, *, disable_eth0: bool = False) -> None:
+    create_routers(subnets, disable_eth0=disable_eth0)
+    create_devices(subnets, disable_eth0=disable_eth0)
 
 
 def create_links(subnets: int) -> None:
@@ -107,7 +113,7 @@ def create_links(subnets: int) -> None:
 
 
 def populate_config(argv: argparse.Namespace) -> None:
-    create_nodes(argv.subnets)
+    create_nodes(argv.subnets, disable_eth0=not argv.eth0)
     create_links(argv.subnets)
 
 
@@ -116,6 +122,12 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--subnets", type=nat_type, default=3, help="amount of subnets")
+    parser.add_argument(
+        "--eth0",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="state of the management network adapter",
+    )
 
     populate_config(parser.parse_args())
     sys.stdout.write(yaml.safe_dump(CONFIG_STATE, indent=4, sort_keys=False))

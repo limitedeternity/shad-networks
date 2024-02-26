@@ -10,11 +10,12 @@ $ sudo su
 Launching subshell in virtual environment...
 
 (Lab_1) # python generate_topology.py --help
-usage: generate_topology.py [-h] [--subnets SUBNETS]
+usage: generate_topology.py [-h] [--subnets SUBNETS] [--eth0 | --no-eth0]
 
 options:
   -h, --help         show this help message and exit
   --subnets SUBNETS  amount of subnets (default: 3)
+  --eth0, --no-eth0  state of the management network adapter (default: True)
 (Lab_1) # python generate_topology.py
 name: static_routing
 prefix: ''
